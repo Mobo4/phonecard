@@ -35,6 +35,7 @@ npm run build
 - `POST /voice/token-verify`
 - `POST /voice/rate-and-authorize`
 - `POST /voice/texml/connect`
+- `POST /voice/texml/dial-complete`
 - `POST /webhooks/telnyx/voice`
 - `POST /internal/reconcile`
 
@@ -58,8 +59,9 @@ npm run build
 - `pending=true` on Telnyx webhook: run `/internal/reconcile` after missing-order events.
 
 ## TeXML Connect Path
-- `POST /voice/texml/connect` returns TeXML for Telnyx hosted runtime.
-- Allowed call: `<Say>` announcement + `<Dial timeLimit="..."><Number>...</Number></Dial>`.
+- `POST /voice/texml/connect` supports both API JSON payloads and live Telnyx form callbacks.
+- Live flow: PIN gather -> token verify -> destination gather -> rate authorize -> `<Say>` minutes -> `<Dial timeLimit="...">`.
+- `<Dial action="/voice/texml/dial-complete">` callback settles usage when the bridged call ends.
 - Denied call: `<Say>` reason prompt + `<Hangup/>`.
 
 ## Deployment
