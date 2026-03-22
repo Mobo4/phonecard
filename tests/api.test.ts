@@ -61,7 +61,7 @@ describe("primitive api", () => {
     expect(final.status).toBe(423);
   });
 
-  it("authorizes afghanistan destination and blocks iran", async () => {
+  it("authorizes afghanistan destination and iran", async () => {
     const bootstrap = await request(app)
       .post("/identity/bootstrap")
       .send({ googleUserId: "google-4", email: "u4@example.com" });
@@ -87,8 +87,9 @@ describe("primitive api", () => {
       userId,
       destination: "+989123456789",
     });
-    expect(ir.status).toBe(403);
-    expect(ir.body.reason_code).toBe("COUNTRY_BLOCKED");
+    expect(ir.status).toBe(200);
+    expect(ir.body.allow).toBe(true);
+    expect(ir.body.max_call_seconds).toBeGreaterThan(0);
   });
 
   it("settles debit idempotently on duplicate telnyx webhook", async () => {

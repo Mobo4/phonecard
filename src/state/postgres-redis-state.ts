@@ -9,10 +9,18 @@ const MIN_CONNECT_SECONDS = 60;
 const SAFETY_BUFFER_SECONDS = 5;
 const LOCK_SECONDS = 15 * 60;
 const FAIL_WINDOW_SECONDS = 15 * 60;
+const BLOCKED_COUNTRY_PREFIXES = (process.env.BLOCKED_COUNTRY_PREFIXES ?? "")
+  .split(",")
+  .map((p) => p.trim())
+  .filter((p) => p.length > 0);
 
-const blockedCountry = (destination: string): boolean => destination.startsWith("+98");
+const blockedCountry = (destination: string): boolean =>
+  BLOCKED_COUNTRY_PREFIXES.some((prefix) => destination.startsWith(prefix));
 
 const fallbackRate = (destination: string): number | null => {
+  if (destination.startsWith("+98")) {
+    return 0.35;
+  }
   if (destination.startsWith("+937")) {
     return 0.24;
   }

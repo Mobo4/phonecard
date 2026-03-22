@@ -19,10 +19,14 @@ type PendingSettlement = {
 const MIN_CONNECT_SECONDS = 60;
 const SAFETY_BUFFER_SECONDS = 5;
 const LOCK_MS = 15 * 60 * 1000;
+const BLOCKED_COUNTRY_PREFIXES = (process.env.BLOCKED_COUNTRY_PREFIXES ?? "")
+  .split(",")
+  .map((p) => p.trim())
+  .filter((p) => p.length > 0);
 
 const fallbackRateForDestination = (destination: string): number | null => {
   if (destination.startsWith("+98")) {
-    return null;
+    return 0.35;
   }
   if (destination.startsWith("+937")) {
     return 0.24;
@@ -33,7 +37,8 @@ const fallbackRateForDestination = (destination: string): number | null => {
   return null;
 };
 
-const countryBlocked = (destination: string): boolean => destination.startsWith("+98");
+const countryBlocked = (destination: string): boolean =>
+  BLOCKED_COUNTRY_PREFIXES.some((prefix) => destination.startsWith(prefix));
 
 export class InMemoryState implements StateStore {
   private userSeq = 1;

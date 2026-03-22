@@ -54,7 +54,7 @@ npm run build
 - `401 invalid_signature` on webhook endpoints: signature secret/header mismatch.
 - `403 USER_MISMATCH` on rate authorization: call session is bound to a different user than payload.
 - `403 admin_required` on `/admin/*`: JWT verified but missing admin role claim.
-- `403 COUNTRY_BLOCKED`: policy gate is active (Iran blocked).
+- `403 COUNTRY_BLOCKED`: policy gate is active for a blocked prefix in `BLOCKED_COUNTRY_PREFIXES`.
 - `402 INSUFFICIENT_BALANCE`: rating primitive denied pre-connect.
 - `pending=true` on Telnyx webhook: run `/internal/reconcile` after missing-order events.
 
