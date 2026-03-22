@@ -40,25 +40,110 @@ const xmlEscape = (value: string): string =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
 
+const pickString = (value: unknown): string | undefined => {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value) && typeof value[0] === "string") {
+    return value[0];
+  }
+  return undefined;
+};
+
+const normalizeTokenInput = (value: string | undefined): string =>
+  (value ?? "").replace(/\D/g, "");
+
+const normalizeDestinationInput = (value: string | undefined): string | null => {
+  if (!value) {
+    return null;
+  }
+  let normalized = value.trim().replace(/[^\d+]/g, "");
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.startsWith("011")) {
+    normalized = `+${normalized.slice(3)}`;
+  } else if (normalized.startsWith("00")) {
+    normalized = `+${normalized.slice(2)}`;
+  } else if (!normalized.startsWith("+")) {
+    normalized = `+${normalized}`;
+  }
+
+  const digitsOnly = normalized.slice(1).replace(/\D/g, "");
+  const e164 = `+${digitsOnly}`;
+  if (!/^\+\d{8,15}$/.test(e164)) {
+    return null;
+  }
+  return e164;
+};
+
+const readCallSessionId = (body: Record<string, unknown>): string | null => {
+  const candidates = [
+    "callSessionId",
+    "CallSessionId",
+    "CallSid",
+    "CallControlId",
+    "call_control_id",
+    "ParentCallSid",
+    "CallLegId",
+    "call_leg_id",
+  ];
+  for (const key of candidates) {
+    const value = pickString(body[key]);
+    if (value && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
+};
+
 const renderAllowTexml = (
   destination: string,
   rateUsdPerMin: number,
   announcedMinutes: number,
   maxCallSeconds: number,
+  dialActionUrl?: string,
 ): string => {
   const country = countryNameFromDestination(destination);
   const minuteWord = announcedMinutes === 1 ? "minute" : "minutes";
   const announcement = `This call to ${country} is estimated at ${rateUsdPerMin.toFixed(
     2,
   )} dollars per minute. You have about ${announcedMinutes} ${minuteWord}.`;
+  const actionAttributes = dialActionUrl
+    ? ` action="${xmlEscape(dialActionUrl)}" method="POST"`
+    : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say>${xmlEscape(announcement)}</Say>
-  <Dial timeLimit="${Math.max(1, Math.floor(maxCallSeconds))}">
+  <Dial${actionAttributes} timeLimit="${Math.max(1, Math.floor(maxCallSeconds))}">
     <Number>${xmlEscape(destination)}</Number>
   </Dial>
 </Response>`;
 };
+
+const renderPinGatherTexml = (actionUrl: string): string => `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" numDigits="8" timeout="8" action="${xmlEscape(actionUrl)}" method="POST">
+    <Say>Please enter your 8 digit pin.</Say>
+  </Gather>
+  <Say>We did not receive your pin.</Say>
+  <Hangup/>
+</Response>`;
+
+const renderDestinationGatherTexml = (actionUrl: string): string => `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" timeout="20" finishOnKey="#" action="${xmlEscape(actionUrl)}" method="POST">
+    <Say>Enter destination number with country code. For example 0093 then number, then pound.</Say>
+  </Gather>
+  <Say>We did not receive a destination number.</Say>
+  <Hangup/>
+</Response>`;
+
+const renderMessageAndHangupTexml = (message: string): string => `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>${xmlEscape(message)}</Say>
+  <Hangup/>
+</Response>`;
 
 const renderDenyTexml = (reasonCode: RateAuthorizeResult["reasonCode"]): string => {
   let message = "Your call cannot be completed at this time.";
@@ -94,6 +179,14 @@ export const createApp = (opts: CreateAppOptions = {}) => {
 
   app.use(
     express.json({
+      verify: (req, _res, buf) => {
+        (req as RawBodyRequest).rawBody = Buffer.from(buf);
+      },
+    }),
+  );
+  app.use(
+    express.urlencoded({
+      extended: false,
       verify: (req, _res, buf) => {
         (req as RawBodyRequest).rawBody = Buffer.from(buf);
       },
@@ -333,6 +426,88 @@ export const createApp = (opts: CreateAppOptions = {}) => {
   });
 
   app.post("/voice/texml/connect", async (req, res) => {
+    const body =
+      typeof req.body === "object" && req.body !== null
+        ? (req.body as Record<string, unknown>)
+        : {};
+    const step = (pickString(req.query.step) ?? "start").toLowerCase();
+    const isTexmlForm =
+      step !== "start" ||
+      "CallSid" in body ||
+      "CallControlId" in body ||
+      "Digits" in body ||
+      "From" in body;
+
+    if (isTexmlForm) {
+      const sendXml = (xml: string) => {
+        res.set("content-type", "text/xml; charset=utf-8");
+        return res.status(200).send(xml);
+      };
+
+      if (step === "verify_pin") {
+        const callSessionId = readCallSessionId(body);
+        const ani = pickString(body.From) ?? pickString(body.from) ?? "unknown";
+        const token = normalizeTokenInput(pickString(body.Digits));
+        if (!callSessionId || token.length !== 8) {
+          return sendXml(
+            renderMessageAndHangupTexml(
+              "Invalid pin input. Please call again and enter your 8 digit pin.",
+            ),
+          );
+        }
+        const verified = await state.verifyToken(callSessionId, ani, token, now());
+        if (!verified.allow || !verified.userId) {
+          const message =
+            verified.reasonCode === "TOKEN_LOCKED"
+              ? "Pin entry is locked after multiple failed attempts. Please try again later."
+              : "Invalid pin. Please top up if needed and try again.";
+          return sendXml(renderMessageAndHangupTexml(message));
+        }
+        const destinationAction = `/voice/texml/connect?step=collect_destination&userId=${encodeURIComponent(
+          verified.userId,
+        )}`;
+        return sendXml(renderDestinationGatherTexml(destinationAction));
+      }
+
+      if (step === "collect_destination") {
+        const userId = pickString(req.query.userId);
+        const callSessionId = readCallSessionId(body);
+        const destination = normalizeDestinationInput(pickString(body.Digits));
+        if (!userId || !callSessionId || !destination) {
+          return sendXml(
+            renderMessageAndHangupTexml(
+              "Invalid destination format. Please call again and enter full international number.",
+            ),
+          );
+        }
+
+        const result = await state.rateAuthorize(callSessionId, userId, destination, now());
+        if (
+          result.allow &&
+          typeof result.rate === "number" &&
+          typeof result.announcedMinutes === "number" &&
+          typeof result.maxCallSeconds === "number"
+        ) {
+          const dialCompleteAction = `/voice/texml/dial-complete?callSessionId=${encodeURIComponent(
+            callSessionId,
+          )}`;
+          return sendXml(
+            renderAllowTexml(
+              destination,
+              result.rate,
+              result.announcedMinutes,
+              result.maxCallSeconds,
+              dialCompleteAction,
+            ),
+          );
+        }
+        return sendXml(renderDenyTexml(result.reasonCode));
+      }
+
+      const pinAction = "/voice/texml/connect?step=verify_pin";
+      return sendXml(renderPinGatherTexml(pinAction));
+    }
+
     const bodySchema = z.object({
       callSessionId: z.string().min(1),
       userId: z.string().min(1),
@@ -371,6 +546,28 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     return res.status(200).send(xml);
   });
 
+  app.post("/voice/texml/dial-complete", async (req, res) => {
+    const body =
+      typeof req.body === "object" && req.body !== null
+        ? (req.body as Record<string, unknown>)
+        : {};
+    const callSessionId =
+      pickString(req.query.callSessionId) ?? readCallSessionId(body);
+    const durationRaw = pickString(body.DialCallDuration) ?? pickString(body.CallDuration);
+    const durationSeconds = Number.parseInt(durationRaw ?? "0", 10);
+    if (callSessionId && Number.isFinite(durationSeconds) && durationSeconds >= 0) {
+      const dialSid = pickString(body.DialCallSid) ?? pickString(body.CallSid) ?? "unknown";
+      const sequence =
+        pickString(body.SequenceNumber) ??
+        pickString(body.Timestamp) ??
+        String(durationSeconds);
+      const eventId = `texml-dial-complete:${dialSid}:${sequence}`;
+      await state.settleCall(eventId, callSessionId, durationSeconds, now());
+    }
+    res.set("content-type", "text/xml; charset=utf-8");
+    return res.status(200).send(renderMessageAndHangupTexml("Call completed."));
+  });
+
   app.post("/webhooks/telnyx/voice", async (req, res) => {
     if (opts.webhookSecrets?.telnyx) {
       const signature = req.header("x-telnyx-signature");
@@ -397,6 +594,44 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     });
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) {
+      const formBody =
+        typeof req.body === "object" && req.body !== null
+          ? (req.body as Record<string, unknown>)
+          : {};
+      const callStatus = (pickString(formBody.CallStatus) ?? "").toLowerCase();
+      const callSessionId =
+        pickString(formBody.CallSessionId) ??
+        pickString(formBody.CallSid) ??
+        pickString(formBody.ParentCallSid);
+      const durationRaw =
+        pickString(formBody.DialCallDuration) ?? pickString(formBody.CallDuration);
+      const durationSeconds = Number.parseInt(durationRaw ?? "0", 10);
+      if (callStatus) {
+        if (callStatus !== "completed") {
+          return res.status(200).json({ accepted: false, reason: "event_ignored" });
+        }
+        if (
+          !callSessionId ||
+          !Number.isFinite(durationSeconds) ||
+          durationSeconds < 0
+        ) {
+          return res.status(400).json({ error: "invalid_payload" });
+        }
+        const eventId = `texml-call-completed:${
+          pickString(formBody.CallSid) ?? callSessionId
+        }:${pickString(formBody.SequenceNumber) ?? pickString(formBody.Timestamp) ?? durationSeconds}`;
+        const settled = await state.settleCall(
+          eventId,
+          callSessionId,
+          durationSeconds,
+          now(),
+        );
+        return res.status(200).json({
+          accepted: true,
+          idempotent: settled.idempotent,
+          pending: settled.pending,
+        });
+      }
       return res.status(400).json({ error: "invalid_payload" });
     }
     if (parsed.data.type !== "call.hangup") {

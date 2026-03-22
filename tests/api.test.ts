@@ -451,4 +451,110 @@ describe("primitive api", () => {
     expect(res.text).toContain("<Hangup/>");
     expect(res.text).not.toContain("<Dial ");
   });
+
+  it("serves initial TeXML PIN gather for Telnyx form webhook", async () => {
+    const res = await request(app)
+      .post("/voice/texml/connect")
+      .type("form")
+      .send({
+        CallSid: "call-form-start",
+        From: "+19495550111",
+        To: "+19496930614",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/xml");
+    expect(res.text).toContain("<Gather");
+    expect(res.text).toContain("step=verify_pin");
+    expect(res.text).toContain("enter your 8 digit pin");
+  });
+
+  it("runs Telnyx form IVR PIN -> destination -> dial flow", async () => {
+    const bootstrap = await request(app)
+      .post("/identity/bootstrap")
+      .send({ googleUserId: "google-13", email: "u13@example.com" });
+    const userId = bootstrap.body.userId as string;
+    const token = bootstrap.body.token as string;
+
+    await request(app).post("/webhooks/stripe").send({
+      id: "evt_13",
+      type: "checkout.session.completed",
+      data: { userId, amountUsd: 9 },
+    });
+
+    const verify = await request(app)
+      .post("/voice/texml/connect?step=verify_pin")
+      .type("form")
+      .send({
+        CallSid: "call-form-ivr",
+        From: "+19495550113",
+        Digits: token,
+      });
+
+    expect(verify.status).toBe(200);
+    expect(verify.text).toContain("<Gather");
+    expect(verify.text).toContain("step=collect_destination");
+
+    const connect = await request(app)
+      .post(`/voice/texml/connect?step=collect_destination&userId=${encodeURIComponent(userId)}`)
+      .type("form")
+      .send({
+        CallSid: "call-form-ivr",
+        Digits: "0093700111122",
+      });
+
+    expect(connect.status).toBe(200);
+    expect(connect.headers["content-type"]).toContain("text/xml");
+    expect(connect.text).toContain("<Dial action=");
+    expect(connect.text).toContain("timeLimit=");
+    expect(connect.text).toContain("<Number>+93700111122</Number>");
+  });
+
+  it("settles call from TeXML dial-complete callback", async () => {
+    const bootstrap = await request(app)
+      .post("/identity/bootstrap")
+      .send({ googleUserId: "google-14", email: "u14@example.com" });
+    const userId = bootstrap.body.userId as string;
+    const token = bootstrap.body.token as string;
+
+    await request(app).post("/webhooks/stripe").send({
+      id: "evt_14",
+      type: "checkout.session.completed",
+      data: { userId, amountUsd: 10 },
+    });
+
+    await request(app)
+      .post("/voice/texml/connect?step=verify_pin")
+      .type("form")
+      .send({
+        CallSid: "call-form-settle",
+        From: "+19495550114",
+        Digits: token,
+      });
+
+    await request(app)
+      .post(`/voice/texml/connect?step=collect_destination&userId=${encodeURIComponent(userId)}`)
+      .type("form")
+      .send({
+        CallSid: "call-form-settle",
+        Digits: "0093700111133",
+      });
+
+    const before = await state.getBalance(userId);
+    const settle = await request(app)
+      .post("/voice/texml/dial-complete?callSessionId=call-form-settle")
+      .type("form")
+      .send({
+        CallSid: "call-form-settle",
+        DialCallSid: "dial-leg-14",
+        DialCallDuration: "120",
+        SequenceNumber: "3",
+      });
+    const after = await state.getBalance(userId);
+
+    expect(settle.status).toBe(200);
+    expect(settle.headers["content-type"]).toContain("text/xml");
+    expect(settle.text).toContain("<Hangup/>");
+    expect(after).toBeLessThan(before);
+  });
 });
