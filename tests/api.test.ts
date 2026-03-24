@@ -92,6 +92,47 @@ describe("primitive api", () => {
     expect(ir.body.max_call_seconds).toBeGreaterThan(0);
   });
 
+  it("prices mobile prefixes higher than non-mobile prefixes", async () => {
+    const bootstrap = await request(app)
+      .post("/identity/bootstrap")
+      .send({ googleUserId: "google-mobile-1", email: "mobile1@example.com" });
+    const userId = bootstrap.body.userId as string;
+
+    await request(app).post("/webhooks/stripe").send({
+      id: "evt_mobile_1",
+      type: "checkout.session.completed",
+      data: { userId, amountUsd: 25 },
+    });
+
+    const iranLandline = await request(app).post("/voice/rate-and-authorize").send({
+      callSessionId: "call-mobile-ir-landline",
+      userId,
+      destination: "+982188907376",
+    });
+    const iranMobile = await request(app).post("/voice/rate-and-authorize").send({
+      callSessionId: "call-mobile-ir-mobile",
+      userId,
+      destination: "+989123049030",
+    });
+    const afLandline = await request(app).post("/voice/rate-and-authorize").send({
+      callSessionId: "call-mobile-af-landline",
+      userId,
+      destination: "+93300111222",
+    });
+    const afMobile = await request(app).post("/voice/rate-and-authorize").send({
+      callSessionId: "call-mobile-af-mobile",
+      userId,
+      destination: "+93700111222",
+    });
+
+    expect(iranLandline.status).toBe(200);
+    expect(iranMobile.status).toBe(200);
+    expect(afLandline.status).toBe(200);
+    expect(afMobile.status).toBe(200);
+    expect(iranMobile.body.rate).toBeGreaterThan(iranLandline.body.rate);
+    expect(afMobile.body.rate).toBeGreaterThan(afLandline.body.rate);
+  });
+
   it("settles debit idempotently on duplicate telnyx webhook", async () => {
     const bootstrap = await request(app)
       .post("/identity/bootstrap")

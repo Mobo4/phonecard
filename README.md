@@ -72,6 +72,9 @@ npm run build
 ## State Backend Selection
 - If `DATABASE_URL` and `REDIS_URL` are set, server uses the persistent `PostgresRedisState`.
 - Otherwise it falls back to in-memory state (safe for local testing only).
+- Default retail margin is `115%` over configured/fallback wholesale rates (`RATE_MARGIN_PERCENT`, default `115`).
+- Iran mobile (`+989`) is rated higher than Iran non-mobile (`+98`) in fallback rates.
+- Store provider base rates in `destination_rates`; retail is computed as `base_rate * (1 + RATE_MARGIN_PERCENT/100)`.
 
 ## Live Persistent Smoke Pass
 ```bash

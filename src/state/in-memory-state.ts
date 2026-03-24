@@ -23,16 +23,26 @@ const BLOCKED_COUNTRY_PREFIXES = (process.env.BLOCKED_COUNTRY_PREFIXES ?? "")
   .split(",")
   .map((p) => p.trim())
   .filter((p) => p.length > 0);
+const RATE_MARGIN_PERCENT = Number.parseFloat(process.env.RATE_MARGIN_PERCENT ?? "115");
+const RATE_MARGIN_MULTIPLIER = Number.isFinite(RATE_MARGIN_PERCENT)
+  ? 1 + RATE_MARGIN_PERCENT / 100
+  : 2.15;
+
+const toRetailRate = (wholesaleRateUsdPerMin: number): number =>
+  Number((wholesaleRateUsdPerMin * RATE_MARGIN_MULTIPLIER).toFixed(4));
 
 const fallbackRateForDestination = (destination: string): number | null => {
+  if (destination.startsWith("+989")) {
+    return toRetailRate(0.22);
+  }
   if (destination.startsWith("+98")) {
-    return 0.35;
+    return toRetailRate(0.16);
   }
   if (destination.startsWith("+937")) {
-    return 0.24;
+    return toRetailRate(0.1116);
   }
   if (destination.startsWith("+93")) {
-    return 0.2;
+    return toRetailRate(0.093);
   }
   return null;
 };
@@ -352,7 +362,7 @@ export class InMemoryState implements StateStore {
       }
     }
     if (selectedRate !== null) {
-      return selectedRate;
+      return toRetailRate(selectedRate);
     }
     return fallbackRateForDestination(destination);
   }

@@ -145,6 +145,11 @@ const renderMessageAndHangupTexml = (message: string): string => `<?xml version=
   <Hangup/>
 </Response>`;
 
+const renderHangupTexml = (): string => `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Hangup/>
+</Response>`;
+
 const renderDenyTexml = (reasonCode: RateAuthorizeResult["reasonCode"]): string => {
   let message = "Your call cannot be completed at this time.";
   if (reasonCode === "INSUFFICIENT_BALANCE") {
@@ -565,7 +570,7 @@ export const createApp = (opts: CreateAppOptions = {}) => {
       await state.settleCall(eventId, callSessionId, durationSeconds, now());
     }
     res.set("content-type", "text/xml; charset=utf-8");
-    return res.status(200).send(renderMessageAndHangupTexml("Call completed."));
+    return res.status(200).send(renderHangupTexml());
   });
 
   app.post("/webhooks/telnyx/voice", async (req, res) => {
