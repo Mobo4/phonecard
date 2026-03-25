@@ -547,9 +547,13 @@ describe("primitive api", () => {
 
     expect(connect.status).toBe(200);
     expect(connect.headers["content-type"]).toContain("text/xml");
-    expect(connect.text).toContain("<Dial action=");
+    expect(connect.text).toContain("<Dial timeLimit=");
+    expect(connect.text).toContain('timeout="');
+    expect(connect.text).toContain('callerId="+19496930614"');
+    expect(connect.text).toContain("action=");
     expect(connect.text).toContain("timeLimit=");
-    expect(connect.text).toContain("<Number>+93700111122</Number>");
+    expect(connect.text).toContain("statusCallback=");
+    expect(connect.text).toContain("+93700111122</Number>");
   });
 
   it("settles call from TeXML dial-complete callback", async () => {

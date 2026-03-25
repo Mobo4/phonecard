@@ -21,6 +21,14 @@ type CreateAppOptions = {
 const nowDefault = (): number => Date.now();
 const TEXML_SAY_VOICE = process.env.TEXML_SAY_VOICE ?? "Azure.fa-IR-DilaraNeural";
 const TEXML_SAY_LANGUAGE = process.env.TEXML_SAY_LANGUAGE;
+const TEXML_OUTBOUND_CALLER_ID = process.env.TEXML_OUTBOUND_CALLER_ID ?? "+19496930614";
+const TEXML_DIAL_TIMEOUT_SECONDS = (() => {
+  const value = Number.parseInt(process.env.TEXML_DIAL_TIMEOUT_SECONDS ?? "60", 10);
+  if (!Number.isFinite(value)) {
+    return 60;
+  }
+  return Math.min(120, Math.max(5, value));
+})();
 
 type RawBodyRequest = express.Request & { rawBody?: Buffer };
 
@@ -126,6 +134,7 @@ const renderAllowTexml = (
   announcedMinutes: number,
   maxCallSeconds: number,
   dialActionUrl?: string,
+  numberStatusCallbackUrl?: string,
 ): string => {
   const country = countryNameFromDestination(destination);
   const announcement = `هزینه تماس به ${country} حدود ${rateUsdPerMin.toFixed(
@@ -134,11 +143,19 @@ const renderAllowTexml = (
   const actionAttributes = dialActionUrl
     ? ` action="${xmlEscape(dialActionUrl)}" method="POST"`
     : "";
+  const callerIdAttributes = TEXML_OUTBOUND_CALLER_ID
+    ? ` callerId="${xmlEscape(TEXML_OUTBOUND_CALLER_ID)}"`
+    : "";
+  const numberStatusAttributes = numberStatusCallbackUrl
+    ? ` statusCallback="${xmlEscape(
+        numberStatusCallbackUrl,
+      )}" statusCallbackEvent="initiated ringing answered completed" statusCallbackMethod="POST"`
+    : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   ${renderSay(announcement)}
-  <Dial${actionAttributes} timeLimit="${Math.max(1, Math.floor(maxCallSeconds))}">
-    <Number>${xmlEscape(destination)}</Number>
+  <Dial timeLimit="${Math.max(1, Math.floor(maxCallSeconds))}" timeout="${TEXML_DIAL_TIMEOUT_SECONDS}"${callerIdAttributes}${actionAttributes}>
+    <Number${numberStatusAttributes}>${xmlEscape(destination)}</Number>
   </Dial>
 </Response>`;
 };
@@ -522,6 +539,10 @@ export const createApp = (opts: CreateAppOptions = {}) => {
             req,
             `/voice/texml/dial-complete?callSessionId=${encodeURIComponent(callSessionId)}`,
           );
+          const numberStatusCallback = absoluteUrl(
+            req,
+            `/webhooks/telnyx/number-status?callSessionId=${encodeURIComponent(callSessionId)}`,
+          );
           return sendXml(
             renderAllowTexml(
               destination,
@@ -529,6 +550,7 @@ export const createApp = (opts: CreateAppOptions = {}) => {
               result.announcedMinutes,
               result.maxCallSeconds,
               dialCompleteAction,
+              numberStatusCallback,
             ),
           );
         }
@@ -597,6 +619,25 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     }
     res.set("content-type", "text/xml; charset=utf-8");
     return res.status(200).send(renderHangupTexml());
+  });
+
+  app.post("/webhooks/telnyx/number-status", async (req, res) => {
+    const body =
+      typeof req.body === "object" && req.body !== null
+        ? (req.body as Record<string, unknown>)
+        : {};
+    const callSessionId = pickString(req.query.callSessionId);
+    const status =
+      pickString(body.CallStatus) ??
+      pickString(body.DialCallStatus) ??
+      pickString(body.CallState);
+    const destination = pickString(body.To) ?? pickString(body.Called) ?? pickString(body.DialTo);
+    return res.status(200).json({
+      accepted: true,
+      callSessionId: callSessionId ?? null,
+      status: status ?? null,
+      destination: destination ?? null,
+    });
   });
 
   app.post("/webhooks/telnyx/voice", async (req, res) => {
