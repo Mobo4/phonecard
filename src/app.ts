@@ -97,6 +97,19 @@ const readCallSessionId = (body: Record<string, unknown>): string | null => {
   return null;
 };
 
+const absoluteUrl = (req: express.Request, pathWithQuery: string): string => {
+  if (/^https?:\/\//i.test(pathWithQuery)) {
+    return pathWithQuery;
+  }
+  const forwardedProto = req.header("x-forwarded-proto");
+  const proto = (forwardedProto?.split(",")[0]?.trim() || req.protocol || "https").toLowerCase();
+  const host = req.header("x-forwarded-host") ?? req.header("host");
+  if (!host) {
+    return pathWithQuery;
+  }
+  return `${proto}://${host}${pathWithQuery}`;
+};
+
 const renderAllowTexml = (
   destination: string,
   rateUsdPerMin: number,
@@ -468,9 +481,12 @@ export const createApp = (opts: CreateAppOptions = {}) => {
               : "Invalid pin. Please top up if needed and try again.";
           return sendXml(renderMessageAndHangupTexml(message));
         }
-        const destinationAction = `/voice/texml/connect?step=collect_destination&userId=${encodeURIComponent(
-          verified.userId,
-        )}`;
+        const destinationAction = absoluteUrl(
+          req,
+          `/voice/texml/connect?step=collect_destination&userId=${encodeURIComponent(
+            verified.userId,
+          )}`,
+        );
         return sendXml(renderDestinationGatherTexml(destinationAction));
       }
 
@@ -493,9 +509,10 @@ export const createApp = (opts: CreateAppOptions = {}) => {
           typeof result.announcedMinutes === "number" &&
           typeof result.maxCallSeconds === "number"
         ) {
-          const dialCompleteAction = `/voice/texml/dial-complete?callSessionId=${encodeURIComponent(
-            callSessionId,
-          )}`;
+          const dialCompleteAction = absoluteUrl(
+            req,
+            `/voice/texml/dial-complete?callSessionId=${encodeURIComponent(callSessionId)}`,
+          );
           return sendXml(
             renderAllowTexml(
               destination,
@@ -509,7 +526,7 @@ export const createApp = (opts: CreateAppOptions = {}) => {
         return sendXml(renderDenyTexml(result.reasonCode));
       }
 
-      const pinAction = "/voice/texml/connect?step=verify_pin";
+      const pinAction = absoluteUrl(req, "/voice/texml/connect?step=verify_pin");
       return sendXml(renderPinGatherTexml(pinAction));
     }
 
