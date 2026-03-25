@@ -44,6 +44,7 @@ npm run build
 - `POST /payments/checkout-session` expects `Authorization: Bearer <supabase_jwt>`.
 - User mismatch between JWT subject and payload user is denied.
 - Admin routes require a bearer token with role `admin` (`403 admin_required` otherwise).
+- Minimum recharge is `$10` (`MIN_RECHARGE_USD`, default `10`) and is enforced on checkout and Stripe credit webhooks.
 
 ## Webhook Signature Notes
 - Stripe and Telnyx signatures are validated against raw request body bytes.

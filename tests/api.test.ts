@@ -38,6 +38,35 @@ describe("primitive api", () => {
     expect(await state.getBalance(userId)).toBe(10);
   });
 
+  it("rejects checkout session creation under $10 minimum recharge", async () => {
+    const res = await request(app).post("/payments/checkout-session").send({
+      userId: "u_1",
+      amountUsd: 9,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("minimum_recharge_not_met");
+    expect(res.body.minRechargeUsd).toBe(10);
+  });
+
+  it("rejects stripe recharge under $10 minimum recharge", async () => {
+    const bootstrap = await request(app)
+      .post("/identity/bootstrap")
+      .send({ googleUserId: "google-2b", email: "u2b@example.com" });
+
+    const userId = bootstrap.body.userId as string;
+    const res = await request(app).post("/webhooks/stripe").send({
+      id: "evt_1b",
+      type: "checkout.session.completed",
+      data: { userId, amountUsd: 9 },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("minimum_recharge_not_met");
+    expect(res.body.minRechargeUsd).toBe(10);
+    expect(await state.getBalance(userId)).toBe(0);
+  });
+
   it("allows a valid token even after temporary ANI lock", async () => {
     const bootstrap = await request(app)
       .post("/identity/bootstrap")
@@ -522,7 +551,7 @@ describe("primitive api", () => {
     await request(app).post("/webhooks/stripe").send({
       id: "evt_13",
       type: "checkout.session.completed",
-      data: { userId, amountUsd: 9 },
+      data: { userId, amountUsd: 10 },
     });
 
     const verify = await request(app)

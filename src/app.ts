@@ -22,6 +22,13 @@ const nowDefault = (): number => Date.now();
 const TEXML_SAY_VOICE = process.env.TEXML_SAY_VOICE ?? "Azure.fa-IR-DilaraNeural";
 const TEXML_SAY_LANGUAGE = process.env.TEXML_SAY_LANGUAGE ?? "fa-IR";
 const TEXML_OUTBOUND_CALLER_ID = process.env.TEXML_OUTBOUND_CALLER_ID ?? "+19496930614";
+const MIN_RECHARGE_USD = (() => {
+  const parsed = Number.parseFloat(process.env.MIN_RECHARGE_USD ?? "10");
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 10;
+  }
+  return Number(parsed.toFixed(2));
+})();
 const TEXML_DIAL_TIMEOUT_SECONDS = (() => {
   const value = Number.parseInt(process.env.TEXML_DIAL_TIMEOUT_SECONDS ?? "60", 10);
   if (!Number.isFinite(value)) {
@@ -276,6 +283,12 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     if (!parsed.success) {
       return res.status(400).json({ error: "invalid_payload" });
     }
+    if (parsed.data.amountUsd < MIN_RECHARGE_USD) {
+      return res.status(400).json({
+        error: "minimum_recharge_not_met",
+        minRechargeUsd: MIN_RECHARGE_USD,
+      });
+    }
 
     if (enforceAuth) {
       const token = parseBearerToken(req);
@@ -409,6 +422,12 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     }
     if (parsed.data.type !== "checkout.session.completed") {
       return res.status(200).json({ accepted: false, reason: "event_ignored" });
+    }
+    if (parsed.data.data.amountUsd < MIN_RECHARGE_USD) {
+      return res.status(400).json({
+        error: "minimum_recharge_not_met",
+        minRechargeUsd: MIN_RECHARGE_USD,
+      });
     }
     const created = await state.creditWallet(
       parsed.data.data.userId,
