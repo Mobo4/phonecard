@@ -20,7 +20,7 @@ type CreateAppOptions = {
 
 const nowDefault = (): number => Date.now();
 const TEXML_SAY_VOICE = process.env.TEXML_SAY_VOICE ?? "Azure.fa-IR-DilaraNeural";
-const TEXML_SAY_LANGUAGE = process.env.TEXML_SAY_LANGUAGE;
+const TEXML_SAY_LANGUAGE = process.env.TEXML_SAY_LANGUAGE ?? "fa-IR";
 const TEXML_OUTBOUND_CALLER_ID = process.env.TEXML_OUTBOUND_CALLER_ID ?? "+19496930614";
 const TEXML_DIAL_TIMEOUT_SECONDS = (() => {
   const value = Number.parseInt(process.env.TEXML_DIAL_TIMEOUT_SECONDS ?? "60", 10);

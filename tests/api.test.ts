@@ -38,7 +38,7 @@ describe("primitive api", () => {
     expect(await state.getBalance(userId)).toBe(10);
   });
 
-  it("locks after 3 invalid token attempts", async () => {
+  it("allows a valid token even after temporary ANI lock", async () => {
     const bootstrap = await request(app)
       .post("/identity/bootstrap")
       .send({ googleUserId: "google-3", email: "u3@example.com" });
@@ -58,7 +58,8 @@ describe("primitive api", () => {
       ani: "+15551230000",
       token: bootstrap.body.token,
     });
-    expect(final.status).toBe(423);
+    expect(final.status).toBe(200);
+    expect(final.body.reasonCode).toBe("ALLOW");
   });
 
   it("authorizes afghanistan destination and iran", async () => {

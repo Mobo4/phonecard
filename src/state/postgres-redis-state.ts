@@ -190,11 +190,6 @@ export class PostgresRedisState implements StateStore {
   ): Promise<TokenVerifyResult> {
     const lockKey = `token:lock:${ani}`;
     const failKey = `token:fail:${ani}`;
-    const locked = await this.redis.get(lockKey);
-    if (locked) {
-      return { allow: false, statusCode: 423, reasonCode: "TOKEN_LOCKED" };
-    }
-
     const tokenHash = hashToken(token);
     const q = await this.pool.query<{ user_id: string; active: boolean }>(
       `
@@ -207,6 +202,37 @@ export class PostgresRedisState implements StateStore {
       [tokenHash],
     );
     const row = q.rows[0];
+    if (row?.active) {
+      await this.redis.del(failKey);
+      await this.redis.del(lockKey);
+      await this.pool.query(
+        `
+        INSERT INTO call_sessions (
+          call_session_id, user_id, destination, retail_rate_usd_per_min,
+          authorized_max_seconds, announced_minutes, status, created_at
+        )
+        VALUES ($1, $2, '', 0, 0, 0, 'authorized', $3)
+        ON CONFLICT (call_session_id) DO UPDATE
+        SET user_id = EXCLUDED.user_id,
+            status = 'authorized',
+            created_at = EXCLUDED.created_at
+        `,
+        [callSessionId, row.user_id, new Date(nowMs)],
+      );
+
+      return {
+        allow: true,
+        statusCode: 200,
+        reasonCode: "ALLOW",
+        userId: row.user_id,
+      };
+    }
+
+    const locked = await this.redis.get(lockKey);
+    if (locked) {
+      return { allow: false, statusCode: 423, reasonCode: "TOKEN_LOCKED" };
+    }
+
     if (!row) {
       const attempts = await this.redis.incr(failKey);
       if (attempts === 1) {
@@ -223,28 +249,7 @@ export class PostgresRedisState implements StateStore {
       return { allow: false, statusCode: 403, reasonCode: "TOKEN_INACTIVE" };
     }
 
-    await this.redis.del(failKey);
-    await this.pool.query(
-      `
-      INSERT INTO call_sessions (
-        call_session_id, user_id, destination, retail_rate_usd_per_min,
-        authorized_max_seconds, announced_minutes, status, created_at
-      )
-      VALUES ($1, $2, '', 0, 0, 0, 'authorized', $3)
-      ON CONFLICT (call_session_id) DO UPDATE
-      SET user_id = EXCLUDED.user_id,
-          status = 'authorized',
-          created_at = EXCLUDED.created_at
-      `,
-      [callSessionId, row.user_id, new Date(nowMs)],
-    );
-
-    return {
-      allow: true,
-      statusCode: 200,
-      reasonCode: "ALLOW",
-      userId: row.user_id,
-    };
+    return { allow: false, statusCode: 403, reasonCode: "TOKEN_INACTIVE" };
   }
 
   async rateAuthorize(

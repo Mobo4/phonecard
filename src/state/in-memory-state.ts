@@ -136,12 +136,33 @@ export class InMemoryState implements StateStore {
     token: string,
     nowMs: number,
   ): Promise<TokenVerifyResult> {
+    const record = this.tokensByHash.get(hashToken(token));
+    if (record && record.active) {
+      this.tokenFailByAni.delete(ani);
+      this.tokenLockUntilByAni.delete(ani);
+      this.callSessionsById.set(callSessionId, {
+        callSessionId,
+        userId: record.userId,
+        destination: "",
+        retailRateUsdPerMin: 0,
+        authorizedMaxSeconds: 0,
+        announcedMinutes: 0,
+        status: "authorized",
+        createdAtMs: nowMs,
+      });
+      return Promise.resolve({
+        allow: true,
+        statusCode: 200,
+        reasonCode: "ALLOW",
+        userId: record.userId,
+      });
+    }
+
     const lockUntil = this.tokenLockUntilByAni.get(ani);
     if (lockUntil && lockUntil > nowMs) {
       return Promise.resolve({ allow: false, statusCode: 423, reasonCode: "TOKEN_LOCKED" });
     }
 
-    const record = this.tokensByHash.get(hashToken(token));
     if (!record) {
       const attempts = (this.tokenFailByAni.get(ani) ?? 0) + 1;
       this.tokenFailByAni.set(ani, attempts);
@@ -156,23 +177,7 @@ export class InMemoryState implements StateStore {
       return Promise.resolve({ allow: false, statusCode: 403, reasonCode: "TOKEN_INACTIVE" });
     }
 
-    this.tokenFailByAni.delete(ani);
-    this.callSessionsById.set(callSessionId, {
-      callSessionId,
-      userId: record.userId,
-      destination: "",
-      retailRateUsdPerMin: 0,
-      authorizedMaxSeconds: 0,
-      announcedMinutes: 0,
-      status: "authorized",
-      createdAtMs: nowMs,
-    });
-    return Promise.resolve({
-      allow: true,
-      statusCode: 200,
-      reasonCode: "ALLOW",
-      userId: record.userId,
-    });
+    return Promise.resolve({ allow: false, statusCode: 403, reasonCode: "TOKEN_INACTIVE" });
   }
 
   rateAuthorize(
