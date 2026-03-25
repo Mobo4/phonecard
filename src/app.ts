@@ -19,6 +19,8 @@ type CreateAppOptions = {
 };
 
 const nowDefault = (): number => Date.now();
+const TEXML_SAY_VOICE = process.env.TEXML_SAY_VOICE ?? "Azure.fa-IR-DilaraNeural";
+const TEXML_SAY_LANGUAGE = process.env.TEXML_SAY_LANGUAGE;
 
 type RawBodyRequest = express.Request & { rawBody?: Buffer };
 
@@ -39,6 +41,14 @@ const xmlEscape = (value: string): string =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
+
+const renderSay = (text: string): string => {
+  const voiceAttr = TEXML_SAY_VOICE ? ` voice="${xmlEscape(TEXML_SAY_VOICE)}"` : "";
+  const languageAttr = TEXML_SAY_LANGUAGE
+    ? ` language="${xmlEscape(TEXML_SAY_LANGUAGE)}"`
+    : "";
+  return `<Say${voiceAttr}${languageAttr}>${xmlEscape(text)}</Say>`;
+};
 
 const pickString = (value: unknown): string | undefined => {
   if (typeof value === "string") {
@@ -118,16 +128,15 @@ const renderAllowTexml = (
   dialActionUrl?: string,
 ): string => {
   const country = countryNameFromDestination(destination);
-  const minuteWord = announcedMinutes === 1 ? "minute" : "minutes";
-  const announcement = `This call to ${country} is estimated at ${rateUsdPerMin.toFixed(
+  const announcement = `هزینه تماس به ${country} حدود ${rateUsdPerMin.toFixed(
     2,
-  )} dollars per minute. You have about ${announcedMinutes} ${minuteWord}.`;
+  )} دلار در دقیقه است. شما حدود ${announcedMinutes} دقیقه زمان دارید.`;
   const actionAttributes = dialActionUrl
     ? ` action="${xmlEscape(dialActionUrl)}" method="POST"`
     : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${xmlEscape(announcement)}</Say>
+  ${renderSay(announcement)}
   <Dial${actionAttributes} timeLimit="${Math.max(1, Math.floor(maxCallSeconds))}">
     <Number>${xmlEscape(destination)}</Number>
   </Dial>
@@ -137,24 +146,26 @@ const renderAllowTexml = (
 const renderPinGatherTexml = (actionUrl: string): string => `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="dtmf" numDigits="8" timeout="8" action="${xmlEscape(actionUrl)}" method="POST">
-    <Say>Please enter your 8 digit pin.</Say>
+    ${renderSay("لطفا رمز هشت رقمی خود را وارد کنید.")}
   </Gather>
-  <Say>We did not receive your pin.</Say>
+  ${renderSay("رمزی دریافت نشد.")}
   <Hangup/>
 </Response>`;
 
 const renderDestinationGatherTexml = (actionUrl: string): string => `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="dtmf" timeout="20" finishOnKey="#" action="${xmlEscape(actionUrl)}" method="POST">
-    <Say>Enter destination number with country code. For example 0093 then number, then pound.</Say>
+    ${renderSay(
+      "شماره مقصد را با کد کشور وارد کنید. برای مثال صفر صفر نود و هشت سپس شماره، و در پایان مربع.",
+    )}
   </Gather>
-  <Say>We did not receive a destination number.</Say>
+  ${renderSay("شماره مقصد دریافت نشد.")}
   <Hangup/>
 </Response>`;
 
 const renderMessageAndHangupTexml = (message: string): string => `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${xmlEscape(message)}</Say>
+  ${renderSay(message)}
   <Hangup/>
 </Response>`;
 
@@ -164,20 +175,20 @@ const renderHangupTexml = (): string => `<?xml version="1.0" encoding="UTF-8"?>
 </Response>`;
 
 const renderDenyTexml = (reasonCode: RateAuthorizeResult["reasonCode"]): string => {
-  let message = "Your call cannot be completed at this time.";
+  let message = "در حال حاضر امکان برقراری تماس وجود ندارد.";
   if (reasonCode === "INSUFFICIENT_BALANCE") {
-    message = "Insufficient balance. Please top up and try again.";
+    message = "موجودی کافی نیست. لطفا حساب خود را شارژ کنید.";
   } else if (reasonCode === "COUNTRY_BLOCKED") {
-    message = "Calls to this destination are not available.";
+    message = "تماس با این مقصد در دسترس نیست.";
   } else if (reasonCode === "DESTINATION_UNSUPPORTED") {
-    message = "That destination is not supported.";
+    message = "این مقصد پشتیبانی نمی‌شود.";
   } else if (reasonCode === "USER_MISMATCH") {
-    message = "Authentication mismatch. Please retry.";
+    message = "خطای احراز هویت. لطفا دوباره تلاش کنید.";
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${xmlEscape(message)}</Say>
+  ${renderSay(message)}
   <Hangup/>
 </Response>`;
 };
@@ -429,9 +440,7 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     );
     const announcementText =
       result.allow && typeof result.rate === "number" && typeof result.announcedMinutes === "number"
-        ? `This call is estimated at ${result.rate.toFixed(2)} dollars per minute. You have about ${result.announcedMinutes} ${
-            result.announcedMinutes === 1 ? "minute" : "minutes"
-          }.`
+        ? `هزینه این تماس حدود ${result.rate.toFixed(2)} دلار در دقیقه است. شما حدود ${result.announcedMinutes} دقیقه زمان دارید.`
         : undefined;
     return res.status(result.statusCode).json({
       allow: result.allow,
@@ -469,7 +478,7 @@ export const createApp = (opts: CreateAppOptions = {}) => {
         if (!callSessionId || token.length !== 8) {
           return sendXml(
             renderMessageAndHangupTexml(
-              "Invalid pin input. Please call again and enter your 8 digit pin.",
+              "رمز نامعتبر است. لطفا دوباره تماس بگیرید و رمز هشت رقمی را وارد کنید.",
             ),
           );
         }
@@ -477,8 +486,8 @@ export const createApp = (opts: CreateAppOptions = {}) => {
         if (!verified.allow || !verified.userId) {
           const message =
             verified.reasonCode === "TOKEN_LOCKED"
-              ? "Pin entry is locked after multiple failed attempts. Please try again later."
-              : "Invalid pin. Please top up if needed and try again.";
+              ? "پس از چند تلاش ناموفق، ورود رمز موقتا قفل شده است. لطفا بعدا دوباره تلاش کنید."
+              : "رمز وارد شده نامعتبر است. لطفا دوباره تلاش کنید.";
           return sendXml(renderMessageAndHangupTexml(message));
         }
         const destinationAction = absoluteUrl(
@@ -497,7 +506,7 @@ export const createApp = (opts: CreateAppOptions = {}) => {
         if (!userId || !callSessionId || !destination) {
           return sendXml(
             renderMessageAndHangupTexml(
-              "Invalid destination format. Please call again and enter full international number.",
+              "فرمت شماره مقصد نادرست است. لطفا شماره بین المللی کامل را وارد کنید.",
             ),
           );
         }

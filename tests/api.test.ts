@@ -469,8 +469,8 @@ describe("primitive api", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/xml");
-    expect(res.text).toContain("<Say>");
-    expect(res.text).toContain("You have about");
+    expect(res.text).toContain("<Say voice=");
+    expect(res.text).toContain("Azure.fa-IR-DilaraNeural");
     expect(res.text).toContain("<Dial timeLimit=");
     expect(res.text).toContain("<Number>+93700111111</Number>");
   });
@@ -489,7 +489,7 @@ describe("primitive api", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/xml");
-    expect(res.text).toContain("Insufficient balance");
+    expect(res.text).toContain("Azure.fa-IR-DilaraNeural");
     expect(res.text).toContain("<Hangup/>");
     expect(res.text).not.toContain("<Dial ");
   });
@@ -508,7 +508,7 @@ describe("primitive api", () => {
     expect(res.headers["content-type"]).toContain("text/xml");
     expect(res.text).toContain("<Gather");
     expect(res.text).toContain("step=verify_pin");
-    expect(res.text).toContain("enter your 8 digit pin");
+    expect(res.text).toContain("Azure.fa-IR-DilaraNeural");
   });
 
   it("runs Telnyx form IVR PIN -> destination -> dial flow", async () => {
