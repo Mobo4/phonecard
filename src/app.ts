@@ -53,6 +53,16 @@ type VoiceStatusEvent = {
   raw: Record<string, unknown>;
 };
 
+type IvrTraceEvent = {
+  timestampMs: number;
+  step: string;
+  callSessionId: string | null;
+  from: string | null;
+  to: string | null;
+  digitsLength: number | null;
+  source: "texml_form" | "json_api";
+};
+
 const countryNameFromDestination = (destination: string): string => {
   if (destination.startsWith("+93")) {
     return "Afghanistan";
@@ -236,10 +246,17 @@ export const createApp = (opts: CreateAppOptions = {}) => {
   const state = opts.state ?? new InMemoryState();
   const now = opts.now ?? nowDefault;
   const recentVoiceStatusEvents: VoiceStatusEvent[] = [];
+  const recentIvrTraceEvents: IvrTraceEvent[] = [];
   const appendVoiceStatusEvent = (event: VoiceStatusEvent) => {
     recentVoiceStatusEvents.push(event);
     if (recentVoiceStatusEvents.length > 200) {
       recentVoiceStatusEvents.splice(0, recentVoiceStatusEvents.length - 200);
+    }
+  };
+  const appendIvrTraceEvent = (event: IvrTraceEvent) => {
+    recentIvrTraceEvents.push(event);
+    if (recentIvrTraceEvents.length > 200) {
+      recentIvrTraceEvents.splice(0, recentIvrTraceEvents.length - 200);
     }
   };
 
@@ -461,6 +478,22 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     return res.status(200).json({ events });
   });
 
+  app.get("/internal/ivr-trace", async (req, res) => {
+    if (!authorizeInternalDiagnostics(req, res)) {
+      return;
+    }
+    const querySchema = z.object({
+      limit: z.coerce.number().int().positive().max(200).optional(),
+    });
+    const parsed = querySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "invalid_query" });
+    }
+    const limit = parsed.data.limit ?? 50;
+    const events = recentIvrTraceEvents.slice(-limit).reverse();
+    return res.status(200).json({ events });
+  });
+
   app.post("/webhooks/stripe", async (req, res) => {
     if (opts.webhookSecrets?.stripe) {
       const signature = req.header("x-webhook-signature");
@@ -571,6 +604,18 @@ export const createApp = (opts: CreateAppOptions = {}) => {
       "From" in body;
 
     if (isTexmlForm) {
+      appendIvrTraceEvent({
+        timestampMs: now(),
+        step,
+        callSessionId: readCallSessionId(body),
+        from: pickString(body.From) ?? pickString(body.from) ?? null,
+        to: pickString(body.To) ?? pickString(body.to) ?? null,
+        digitsLength: (() => {
+          const digits = pickString(body.Digits);
+          return digits ? digits.length : null;
+        })(),
+        source: "texml_form",
+      });
       const sendXml = (xml: string) => {
         res.set("content-type", "text/xml; charset=utf-8");
         return res.status(200).send(xml);
@@ -665,6 +710,15 @@ export const createApp = (opts: CreateAppOptions = {}) => {
       parsed.data.destination,
       now(),
     );
+    appendIvrTraceEvent({
+      timestampMs: now(),
+      step: "json_connect",
+      callSessionId: parsed.data.callSessionId,
+      from: null,
+      to: parsed.data.destination,
+      digitsLength: null,
+      source: "json_api",
+    });
 
     if (
       result.allow &&

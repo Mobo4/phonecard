@@ -528,6 +528,32 @@ describe("primitive api", () => {
     expect(Array.isArray(internalList.body.events)).toBe(true);
   });
 
+  it("captures IVR trace events for TeXML callbacks", async () => {
+    await request(app)
+      .post("/voice/texml/connect")
+      .type("form")
+      .send({
+        CallSid: "call-trace-1",
+        From: "+19495550999",
+        To: "+19496930614",
+      });
+
+    const trace = await request(app).get("/internal/ivr-trace?limit=5");
+    expect(trace.status).toBe(200);
+    expect(Array.isArray(trace.body.events)).toBe(true);
+    expect(
+      (
+        trace.body.events as Array<{
+          step: string;
+          callSessionId: string;
+          source: string;
+        }>
+      ).some(
+        (e) => e.step === "start" && e.callSessionId === "call-trace-1" && e.source === "texml_form",
+      ),
+    ).toBe(true);
+  });
+
   it("returns TeXML with minutes announcement and hard timeLimit on allow", async () => {
     const bootstrap = await request(app)
       .post("/identity/bootstrap")
