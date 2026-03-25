@@ -22,6 +22,7 @@ const nowDefault = (): number => Date.now();
 const TEXML_SAY_VOICE = process.env.TEXML_SAY_VOICE ?? "Azure.fa-IR-DilaraNeural";
 const TEXML_SAY_LANGUAGE = process.env.TEXML_SAY_LANGUAGE ?? "fa-IR";
 const TEXML_OUTBOUND_CALLER_ID = process.env.TEXML_OUTBOUND_CALLER_ID ?? "+19496930614";
+const INTERNAL_DIAG_KEY = process.env.INTERNAL_DIAG_KEY;
 const MIN_RECHARGE_USD = (() => {
   const parsed = Number.parseFloat(process.env.MIN_RECHARGE_USD ?? "10");
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -250,6 +251,21 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     return authHeader.slice("Bearer ".length).trim();
   };
 
+  const authorizeInternalDiagnostics = (
+    req: express.Request,
+    res: express.Response,
+  ): boolean => {
+    if (!INTERNAL_DIAG_KEY) {
+      return true;
+    }
+    const key = req.header("x-internal-key");
+    if (key !== INTERNAL_DIAG_KEY) {
+      res.status(401).json({ error: "invalid_internal_key" });
+      return false;
+    }
+    return true;
+  };
+
   app.use(
     express.json({
       verify: (req, _res, buf) => {
@@ -415,6 +431,22 @@ export const createApp = (opts: CreateAppOptions = {}) => {
   app.get("/admin/voice-status", async (req, res) => {
     const identity = await authorizeAdmin(req, res);
     if (!identity) {
+      return;
+    }
+    const querySchema = z.object({
+      limit: z.coerce.number().int().positive().max(200).optional(),
+    });
+    const parsed = querySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "invalid_query" });
+    }
+    const limit = parsed.data.limit ?? 50;
+    const events = recentVoiceStatusEvents.slice(-limit).reverse();
+    return res.status(200).json({ events });
+  });
+
+  app.get("/internal/voice-status", async (req, res) => {
+    if (!authorizeInternalDiagnostics(req, res)) {
       return;
     }
     const querySchema = z.object({

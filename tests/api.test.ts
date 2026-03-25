@@ -522,6 +522,10 @@ describe("primitive api", () => {
       .get("/admin/voice-status")
       .set("authorization", "Bearer user-token");
     expect(nonAdmin.status).toBe(403);
+
+    const internalList = await request(securedApp).get("/internal/voice-status?limit=10");
+    expect(internalList.status).toBe(200);
+    expect(Array.isArray(internalList.body.events)).toBe(true);
   });
 
   it("returns TeXML with minutes announcement and hard timeLimit on allow", async () => {
