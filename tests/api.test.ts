@@ -479,6 +479,51 @@ describe("primitive api", () => {
     ).toBe(true);
   });
 
+  it("captures recent voice status events for admin diagnostics", async () => {
+    const securedApp = createApp({
+      state: new InMemoryState(),
+      now: () => 1_700_000_000_000,
+      auth: {
+        requireUserForCheckout: true,
+        verifyBearerToken: async (token) => {
+          if (token === "admin-token") {
+            return { userId: "u_admin", role: "admin" };
+          }
+          return { userId: "u_user", role: "user" };
+        },
+      },
+    });
+
+    await request(securedApp)
+      .post("/webhooks/telnyx/number-status?callSessionId=call-voice-1")
+      .send({
+        CallSid: "call-voice-1",
+        DialCallSid: "dial-voice-1",
+        DialCallStatus: "completed",
+        To: "+982188907376",
+        From: "+19496930614",
+        HangupCause: "ALLOTTED_TIMEOUT",
+        SipResponseCode: "480",
+      });
+
+    const adminList = await request(securedApp)
+      .get("/admin/voice-status?limit=10")
+      .set("authorization", "Bearer admin-token");
+
+    expect(adminList.status).toBe(200);
+    expect(Array.isArray(adminList.body.events)).toBe(true);
+    expect(
+      (adminList.body.events as Array<{ type: string; hangupCause: string }>).some(
+        (e) => e.type === "number_status" && e.hangupCause === "ALLOTTED_TIMEOUT",
+      ),
+    ).toBe(true);
+
+    const nonAdmin = await request(securedApp)
+      .get("/admin/voice-status")
+      .set("authorization", "Bearer user-token");
+    expect(nonAdmin.status).toBe(403);
+  });
+
   it("returns TeXML with minutes announcement and hard timeLimit on allow", async () => {
     const bootstrap = await request(app)
       .post("/identity/bootstrap")

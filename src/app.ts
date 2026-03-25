@@ -38,6 +38,19 @@ const TEXML_DIAL_TIMEOUT_SECONDS = (() => {
 })();
 
 type RawBodyRequest = express.Request & { rawBody?: Buffer };
+type VoiceStatusEvent = {
+  timestampMs: number;
+  type: "number_status" | "dial_complete";
+  callSessionId: string | null;
+  callSid: string | null;
+  dialCallSid: string | null;
+  status: string | null;
+  destination: string | null;
+  from: string | null;
+  hangupCause: string | null;
+  sipResponseCode: string | null;
+  raw: Record<string, unknown>;
+};
 
 const countryNameFromDestination = (destination: string): string => {
   if (destination.startsWith("+93")) {
@@ -221,6 +234,13 @@ export const createApp = (opts: CreateAppOptions = {}) => {
   const app = express();
   const state = opts.state ?? new InMemoryState();
   const now = opts.now ?? nowDefault;
+  const recentVoiceStatusEvents: VoiceStatusEvent[] = [];
+  const appendVoiceStatusEvent = (event: VoiceStatusEvent) => {
+    recentVoiceStatusEvents.push(event);
+    if (recentVoiceStatusEvents.length > 200) {
+      recentVoiceStatusEvents.splice(0, recentVoiceStatusEvents.length - 200);
+    }
+  };
 
   const parseBearerToken = (req: express.Request): string | null => {
     const authHeader = req.header("authorization");
@@ -390,6 +410,23 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     const limit = parsed.data.limit ?? 50;
     const entries = await state.listAuditEntries(limit);
     return res.status(200).json({ entries });
+  });
+
+  app.get("/admin/voice-status", async (req, res) => {
+    const identity = await authorizeAdmin(req, res);
+    if (!identity) {
+      return;
+    }
+    const querySchema = z.object({
+      limit: z.coerce.number().int().positive().max(200).optional(),
+    });
+    const parsed = querySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "invalid_query" });
+    }
+    const limit = parsed.data.limit ?? 50;
+    const events = recentVoiceStatusEvents.slice(-limit).reverse();
+    return res.status(200).json({ events });
   });
 
   app.post("/webhooks/stripe", async (req, res) => {
@@ -635,6 +672,31 @@ export const createApp = (opts: CreateAppOptions = {}) => {
         String(durationSeconds);
       const eventId = `texml-dial-complete:${dialSid}:${sequence}`;
       await state.settleCall(eventId, callSessionId, durationSeconds, now());
+      appendVoiceStatusEvent({
+        timestampMs: now(),
+        type: "dial_complete",
+        callSessionId,
+        callSid: pickString(body.CallSid) ?? null,
+        dialCallSid: pickString(body.DialCallSid) ?? null,
+        status:
+          pickString(body.DialCallStatus) ??
+          pickString(body.CallStatus) ??
+          pickString(body.CallState) ??
+          "completed",
+        destination:
+          pickString(body.To) ??
+          pickString(body.Called) ??
+          pickString(body.DialTo) ??
+          null,
+        from: pickString(body.From) ?? pickString(body.Caller) ?? null,
+        hangupCause:
+          pickString(body.HangupCause) ??
+          pickString(body.DialHangupCause) ??
+          pickString(body.HangupCauseCode) ??
+          null,
+        sipResponseCode: pickString(body.SipResponseCode) ?? null,
+        raw: body,
+      });
     }
     res.set("content-type", "text/xml; charset=utf-8");
     return res.status(200).send(renderHangupTexml());
@@ -651,6 +713,23 @@ export const createApp = (opts: CreateAppOptions = {}) => {
       pickString(body.DialCallStatus) ??
       pickString(body.CallState);
     const destination = pickString(body.To) ?? pickString(body.Called) ?? pickString(body.DialTo);
+    appendVoiceStatusEvent({
+      timestampMs: now(),
+      type: "number_status",
+      callSessionId: callSessionId ?? null,
+      callSid: pickString(body.CallSid) ?? null,
+      dialCallSid: pickString(body.DialCallSid) ?? null,
+      status: status ?? null,
+      destination: destination ?? null,
+      from: pickString(body.From) ?? pickString(body.Caller) ?? null,
+      hangupCause:
+        pickString(body.HangupCause) ??
+        pickString(body.DialHangupCause) ??
+        pickString(body.HangupCauseCode) ??
+        null,
+      sipResponseCode: pickString(body.SipResponseCode) ?? null,
+      raw: body,
+    });
     return res.status(200).json({
       accepted: true,
       callSessionId: callSessionId ?? null,
