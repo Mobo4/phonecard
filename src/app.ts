@@ -222,6 +222,8 @@ const renderHangupTexml = (): string => `<?xml version="1.0" encoding="UTF-8"?>
   <Hangup/>
 </Response>`;
 
+const renderPinStartTexml = (actionUrl: string): string => renderPinGatherTexml(actionUrl);
+
 const renderDenyTexml = (reasonCode: RateAuthorizeResult["reasonCode"]): string => {
   let message = "در حال حاضر امکان برقراری تماس وجود ندارد.";
   if (reasonCode === "INSUFFICIENT_BALANCE") {
@@ -590,20 +592,30 @@ export const createApp = (opts: CreateAppOptions = {}) => {
     });
   });
 
+  app.get("/voice/texml/connect", async (req, res) => {
+    const step = (pickString(req.query.step) ?? "start").toLowerCase();
+    if (step !== "start") {
+      res.set("content-type", "text/xml; charset=utf-8");
+      return res.status(200).send(renderMessageAndHangupTexml("درخواست نامعتبر است."));
+    }
+    const pinAction = absoluteUrl(req, "/voice/texml/connect?step=verify_pin");
+    res.set("content-type", "text/xml; charset=utf-8");
+    return res.status(200).send(renderPinStartTexml(pinAction));
+  });
+
   app.post("/voice/texml/connect", async (req, res) => {
     const body =
       typeof req.body === "object" && req.body !== null
         ? (req.body as Record<string, unknown>)
         : {};
     const step = (pickString(req.query.step) ?? "start").toLowerCase();
-    const isTexmlForm =
-      step !== "start" ||
-      "CallSid" in body ||
-      "CallControlId" in body ||
-      "Digits" in body ||
-      "From" in body;
+    const isJsonConnectPayload =
+      step === "start" &&
+      typeof body.callSessionId === "string" &&
+      typeof body.userId === "string" &&
+      typeof body.destination === "string";
 
-    if (isTexmlForm) {
+    if (!isJsonConnectPayload) {
       appendIvrTraceEvent({
         timestampMs: now(),
         step,
@@ -691,7 +703,7 @@ export const createApp = (opts: CreateAppOptions = {}) => {
       }
 
       const pinAction = absoluteUrl(req, "/voice/texml/connect?step=verify_pin");
-      return sendXml(renderPinGatherTexml(pinAction));
+      return sendXml(renderPinStartTexml(pinAction));
     }
 
     const bodySchema = z.object({

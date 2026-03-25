@@ -616,6 +616,24 @@ describe("primitive api", () => {
     expect(res.text).toContain("Azure.fa-IR-DilaraNeural");
   });
 
+  it("serves TeXML PIN gather even when form body is empty", async () => {
+    const res = await request(app).post("/voice/texml/connect").type("form").send({});
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/xml");
+    expect(res.text).toContain("<Gather");
+    expect(res.text).toContain("step=verify_pin");
+  });
+
+  it("serves TeXML PIN gather on GET as a safe fallback", async () => {
+    const res = await request(app).get("/voice/texml/connect");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/xml");
+    expect(res.text).toContain("<Gather");
+    expect(res.text).toContain("step=verify_pin");
+  });
+
   it("runs Telnyx form IVR PIN -> destination -> dial flow", async () => {
     const bootstrap = await request(app)
       .post("/identity/bootstrap")
